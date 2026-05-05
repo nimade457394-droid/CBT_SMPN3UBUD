@@ -87,197 +87,229 @@
 </div>
 
 <script>
-  const GAS_URL = "https://script.google.com/macros/s/AKfycbzLAWOn9MRMVCwG4V-IieGwrSr5mh7dinc_KugSS_rT7nRWOvu_MSUHVAjPIvxv0X4nqw/exec";
+  
+// GANTI DENGAN URL WEB APP ANDA
+const GAS_URL = "https://script.google.com/macros/s/AKfycbzLAWOn9MRMVCwG4V-IieGwrSr5mh7dinc_KugSS_rT7nRWOvu_MSUHVAjPIvxv0X4nqw/exec";
 
-  let userData = {}, questionsPG = [], questionsESAI = [], questions = [], 
-      currentIdx = 0, answers = {}, timeLeft = 0, timerInterval, currentMode = 'PG', 
-      cheatCount = 0, cheatLog = [], pgKunci = [], isWarningActive = false;
+let userData = {}, questionsPG = [], questionsESAI = [], questions = [], 
+    currentIdx = 0, answers = {}, timeLeft = 0, timerInterval, currentMode = 'PG', 
+    cheatCount = 0, cheatLog = [], pgKunci = [], isWarningActive = false;
 
-  // -- ANTI REFRESH: Cek LocalStorage --
-  window.onload = () => {
-    const saved = localStorage.getItem('cbt_session');
+// --- 1. FUNGSI PERSISTENCE (ANTI-REFRESH) ---
+window.onload = () => {
+    const saved = sessionStorage.getItem('cbt_active_session');
     if (saved) {
-      const data = JSON.parse(saved);
-      userData = data.userData;
-      answers = data.answers;
-      cheatCount = data.cheatCount;
-      cheatLog = data.cheatLog;
-      timeLeft = data.timeLeft;
-      questionsPG = data.questionsPG;
-      questionsESAI = data.questionsESAI;
-      pgKunci = data.pgKunci;
-      
-      if (userData.username) {
-        document.getElementById('loginPage').classList.add('hidden');
-        resumeExam();
-      }
+        const data = JSON.parse(saved);
+        userData = data.userData;
+        answers = data.answers || {};
+        cheatCount = data.cheatCount || 0;
+        cheatLog = data.cheatLog || [];
+        timeLeft = data.timeLeft;
+        questionsPG = data.questionsPG;
+        questionsESAI = data.questionsESAI;
+        pgKunci = data.pgKunci;
+        currentMode = data.currentMode || 'PG';
+        currentIdx = data.currentIdx || 0;
+
+        if (userData.row) {
+            document.getElementById('loginPage').classList.add('hidden');
+            document.getElementById('subjectPage').classList.add('hidden');
+            document.getElementById('examPage').classList.remove('hidden');
+            
+            // Lanjutkan Timer & Tampilkan Soal
+            startTimer();
+            switchMode(currentMode);
+            showSoal(currentIdx);
+        }
     }
-  };
+};
 
-  function saveProgress() {
-    localStorage.setItem('cbt_session', JSON.stringify({
-      userData, answers, cheatCount, cheatLog, timeLeft, questionsPG, questionsESAI, pgKunci, currentMode
-    }));
-  }
+function saveSession() {
+    const sessionData = {
+        userData, answers, cheatCount, cheatLog, timeLeft, 
+        questionsPG, questionsESAI, pgKunci, currentMode, currentIdx
+    };
+    sessionStorage.setItem('cbt_active_session', JSON.stringify(sessionData));
+}
 
-  async function callGAS(action, data = {}) {
-    try {
-      const res = await fetch(GAS_URL, { method: "POST", body: JSON.stringify({ action, ...data }) });
-      return await res.json();
-    } catch (e) { return null; }
-  }
-
-  async function handleLogin(role) {
+// --- 2. LOGIKA LOGIN & START ---
+async function handleLogin(role) {
     const kls = document.getElementById('kelas').value, user = document.getElementById('username').value, pass = document.getElementById('password').value;
-    if(!user || !pass) return alert("Isi lengkap!");
+    if(!user || !pass) return alert("Isi data login!");
+    
     const res = await callGAS('loginUser', { kelas: kls, username: user, password: pass, role: role });
     if (res && res.success) {
-      userData = { ...res, kelas: kls };
-      document.getElementById('loginPage').classList.add('hidden');
-      if (role === 'siswa') {
-        document.getElementById('subjectPage').classList.remove('hidden');
-        document.getElementById('welcomeUser').innerText = "Halo, " + res.nama;
-      } else { document.getElementById('teacherDashboard').classList.remove('hidden'); }
+        userData = { ...res, kelas: kls };
+        document.getElementById('loginPage').classList.add('hidden');
+        if (role === 'siswa') {
+            document.getElementById('subjectPage').classList.remove('hidden');
+            document.getElementById('welcomeUser').innerText = "Halo, " + res.nama;
+        } else { document.getElementById('teacherDashboard').classList.remove('hidden'); }
+        saveSession();
     } else alert("Login Gagal!");
-  }
+}
 
-  async function startExam() {
+async function startExam() {
     const mapel = document.getElementById('mapel').value;
-    document.getElementById('btnMulai').innerText = "Memuat...";
+    document.getElementById('btnMulai').innerText = "Memuat Soal...";
+    document.getElementById('btnMulai').disabled = true;
+
     const config = await callGAS('getExamConfig', { mapel, tingkat: userData.kelas.substring(0,1) });
-    if(!config) return alert("Soal tidak tersedia!");
+    if(!config) return alert("Konfigurasi soal tidak ditemukan!");
 
     const [pg, esai] = await Promise.all([
-      callGAS('fetchQuestions', { url: config.pgUrl, type: 'PG' }),
-      callGAS('fetchQuestions', { url: config.esaiUrl, type: 'ESAI' })
+        callGAS('fetchQuestions', { url: config.pgUrl, type: 'PG' }),
+        callGAS('fetchQuestions', { url: config.esaiUrl, type: 'ESAI' })
     ]);
 
     questionsPG = pg || [];
     questionsESAI = esai || [];
     pgKunci = questionsPG.map(q => q.kunci);
-    timeLeft = 60 * 60; // 60 Menit
-    
-    resumeExam();
-  }
+    timeLeft = 60 * 60; // Default 60 Menit
 
-  function resumeExam() {
     document.getElementById('subjectPage').classList.add('hidden');
     document.getElementById('examPage').classList.remove('hidden');
+    
+    startTimer();
     switchMode('PG');
-    if(!timerInterval) startTimer();
-    saveProgress();
-  }
+    saveSession();
+}
 
-  function startTimer() {
+// --- 3. LOGIKA TIMER & NAVIGASI ---
+function startTimer() {
+    if (timerInterval) clearInterval(timerInterval);
     timerInterval = setInterval(() => {
-      timeLeft--;
-      let m = Math.floor(timeLeft/60), s = timeLeft%60;
-      document.getElementById('timer').innerText = `${m}:${s<10?'0'+s:s}`;
-      if(timeLeft % 10 === 0) saveProgress();
-      if(timeLeft <= 0) { clearInterval(timerInterval); finalSubmit("Waktu Habis"); }
+        if (timeLeft <= 0) {
+            clearInterval(timerInterval);
+            finalSubmit("Waktu Habis");
+            return;
+        }
+        timeLeft--;
+        let m = Math.floor(timeLeft/60), s = timeLeft%60;
+        document.getElementById('timer').innerText = `${m}:${s<10?'0'+s:s}`;
+        
+        // Simpan sisa waktu ke session tiap 5 detik
+        if (timeLeft % 5 === 0) saveSession();
     }, 1000);
-  }
+}
 
-  function switchMode(mode) {
-    currentMode = mode;
-    questions = (mode === 'PG') ? questionsPG : questionsESAI;
-    document.getElementById('tabPG').className = mode==='PG' ? "flex-1 py-1 rounded bg-blue-700 text-white text-xs font-bold" : "flex-1 py-1 rounded bg-gray-100 text-xs font-bold";
-    document.getElementById('tabESAI').className = mode==='ESAI' ? "flex-1 py-1 rounded bg-emerald-600 text-white text-xs font-bold" : "flex-1 py-1 rounded bg-gray-100 text-xs font-bold";
-    renderNav();
-    showSoal(0);
-  }
-
-  function showSoal(idx) {
+function showSoal(idx) {
     currentIdx = idx;
-    if (questions.length === 0) {
-      document.getElementById('soalContainer').innerHTML = "Tidak ada soal.";
-      return;
-    }
+    if (questions.length === 0) return;
+    
     const q = questions[idx];
     document.getElementById('infoNomor').innerText = `${currentMode} - No ${idx+1}`;
-    let h = q.img ? `<img src="${q.img}" class="max-h-40 mb-4 mx-auto">` : '';
-    h += `<div class="text-xl mb-6 font-medium">${q.soal}</div>`;
+    
+    let h = q.img ? `<img src="${q.img}" class="max-h-48 mb-4 mx-auto rounded shadow-md">` : '';
+    h += `<div class="text-xl mb-6 font-semibold leading-relaxed">${q.soal}</div>`;
     
     if (currentMode === 'PG') {
-      ['a','b','c','d'].forEach(o => {
-        const val = o.toUpperCase();
-        const checked = answers["PG_"+idx] === val ? 'checked' : '';
-        h += `<label class="block p-3 border rounded-lg mb-2 cursor-pointer hover:bg-gray-50">
-          <input type="radio" name="opt" onclick="saveAns('${val}')" ${checked}> ${val}. ${q[o]}
-        </label>`;
-      });
+        ['a','b','c','d'].forEach(o => {
+            const val = o.toUpperCase();
+            const checked = answers["PG_"+idx] === val ? 'checked' : '';
+            h += `<label class="block p-4 border-2 rounded-xl mb-3 cursor-pointer transition hover:bg-blue-50 border-gray-100">
+                <input type="radio" name="opt" class="hidden" onclick="saveAns('${val}')" ${checked}> 
+                <span class="font-bold mr-2">${val}.</span> ${q[o]}
+            </label>`;
+        });
     } else {
-      h += `<textarea oninput="saveAns(this.value)" class="w-full border p-3 rounded-lg h-32" placeholder="Jawaban esai...">${answers["ESAI_"+idx]||''}</textarea>`;
+        h += `<textarea oninput="saveAns(this.value)" class="w-full border-2 p-4 rounded-xl h-40 focus:border-blue-500 outline-none" placeholder="Ketik jawaban esai di sini...">${answers["ESAI_"+idx]||''}</textarea>`;
     }
+    
     document.getElementById('soalContainer').innerHTML = h;
-    MathJax.typesetPromise();
+    if(window.MathJax) MathJax.typesetPromise();
     updateNavUI();
-  }
+    saveSession();
+}
 
-  function saveAns(v) { 
+function saveAns(v) { 
     answers[currentMode + "_" + currentIdx] = v; 
     updateNavUI(); 
-    saveProgress();
-  }
+    saveSession();
+}
 
-  function renderNav() {
-    let h = '';
-    questions.forEach((_, i) => h += `<div id="nav-${i}" onclick="showSoal(${i})" class="question-nav">${i+1}</div>`);
-    document.getElementById('navGrid').innerHTML = h;
-    updateNavUI();
-  }
+// --- 4. LOGIKA KEAMANAN (ANTI-SENSITIF) ---
+let blurTimeout;
+window.addEventListener('blur', () => {
+    if (timeLeft > 0) {
+        // Beri toleransi 3 detik (antisipasi layar mati/redup sebentar)
+        blurTimeout = setTimeout(() => {
+            cheatCount++;
+            cheatLog.push(`[${new Date().toLocaleTimeString()}] Deteksi Keluar Layar`);
+            saveSession();
+            
+            if (cheatCount >= 3) {
+                alert("PELANGGARAN MAKSIMAL! Sistem otomatis mengumpulkan jawaban.");
+                finalSubmit("Diskualifikasi (3x Pindah Tab)");
+            } else {
+                alert(`PERINGATAN! Jangan pindah layar atau menutup browser.\nPelanggaran: ${cheatCount}/3`);
+            }
+        }, 3000); 
+    }
+});
 
-  function updateNavUI() {
-    document.querySelectorAll('.question-nav').forEach((el, i) => {
-      el.classList.remove('active', 'done');
-      if (i === currentIdx) el.classList.add('active');
-      if (answers[currentMode + "_" + i]) el.classList.add('done');
-    });
-    document.getElementById('prevBtn').style.visibility = currentIdx === 0 ? 'hidden' : 'visible';
-    document.getElementById('nextBtn').classList.toggle('hidden', currentIdx === questions.length - 1);
-    document.getElementById('finishBtn').classList.toggle('hidden', !(currentMode === 'ESAI' && currentIdx === questions.length -1));
-  }
+window.addEventListener('focus', () => {
+    clearTimeout(blurTimeout); // Batalkan pelanggaran jika kembali kurang dari 3 detik
+});
 
-  function changeSoal(s) { showSoal(currentIdx + s); }
+// Deteksi Split Screen (Resize)
+window.addEventListener('resize', () => {
+    if (timeLeft > 0) {
+        if (window.innerWidth < screen.width * 0.8) {
+            document.getElementById('securityOverlay').style.display = 'block';
+        } else {
+            document.getElementById('securityOverlay').style.display = 'none';
+        }
+    }
+});
 
-  function trySubmit() { if(confirm("Kumpulkan jawaban?")) finalSubmit("Selesai Normal"); }
-
-  async function finalSubmit(status) {
+// --- 5. SUBMIT ---
+async function finalSubmit(status) {
     clearInterval(timerInterval);
-    document.getElementById('examPage').innerHTML = "<div class='text-center p-10 font-bold'>Mengirim jawaban...</div>";
+    document.getElementById('examPage').innerHTML = `
+        <div class="text-center p-20">
+            <i class="fas fa-spinner fa-spin text-4xl text-blue-700 mb-4"></i>
+            <p class="text-xl font-bold">Mengirim Jawaban... Mohon Tunggu.</p>
+        </div>`;
+    
     await callGAS('processFinalSubmit', { 
         kelas: userData.kelas, row: userData.row, answers, pgKunci, status, 
         pelanggaran: cheatCount, catatan: cheatLog.join("\n") 
     });
-    localStorage.removeItem('cbt_session');
-    alert("Berhasil!");
+    
+    sessionStorage.clear(); // Hapus sesi setelah benar-benar selesai
+    alert("Ujian Selesai! Jawaban Anda telah tersimpan.");
     location.reload();
-  }
+}
 
-  // -- SECURITY LOGIC --
-  window.addEventListener('blur', () => {
-    if (timeLeft > 0) {
-      cheatCount++;
-      cheatLog.push(`[${new Date().toLocaleTimeString()}] Keluar/Pindah Tab`);
-      saveProgress();
-      if (cheatCount >= 3) {
-        alert("PELANGGARAN MAKSIMAL! Sistem otomatis mengumpulkan.");
-        finalSubmit("Diskualifikasi (Pindah Tab)");
-      } else {
-        alert("PERINGATAN: Jangan keluar dari layar ujian! Pelanggaran: " + cheatCount + "/3");
-      }
-    }
-  });
-
-  window.addEventListener('resize', () => {
-    if (timeLeft > 0) {
-      if (window.innerWidth < screen.width * 0.8) {
-        document.getElementById('securityOverlay').style.display = 'block';
-      } else {
-        document.getElementById('securityOverlay').style.display = 'none';
-      }
-    }
-  });
-</script>
-</body>
-</html>
+// Fungsi pendukung navigasi (Pastikan ini tetap ada di kode Anda)
+function switchMode(mode) {
+    currentMode = mode;
+    questions = (mode === 'PG') ? questionsPG : questionsESAI;
+    document.getElementById('tabPG').style.opacity = mode==='PG'?'1':'0.5';
+    document.getElementById('tabESAI').style.opacity = mode==='ESAI'?'1':'0.5';
+    renderNav();
+    showSoal(0);
+}
+function renderNav() {
+    let h = '';
+    questions.forEach((_, i) => h += `<div onclick="showSoal(${i})" class="question-nav" id="nav-${i}">${i+1}</div>`);
+    document.getElementById('navGrid').innerHTML = h;
+    updateNavUI();
+}
+function updateNavUI() {
+    document.querySelectorAll('.question-nav').forEach((el, i) => {
+        el.className = "question-nav";
+        if (i === currentIdx) el.classList.add('active');
+        if (answers[currentMode + "_" + i]) el.classList.add('done');
+    });
+    document.getElementById('prevBtn').style.display = currentIdx === 0 ? 'none' : 'block';
+    document.getElementById('nextBtn').style.display = currentIdx === questions.length - 1 ? 'none' : 'block';
+    document.getElementById('finishBtn').classList.toggle('hidden', !(currentMode === 'ESAI' && currentIdx === questions.length -1));
+}
+function changeSoal(s) { showSoal(currentIdx + s); }
+async function callGAS(action, data) {
+    const response = await fetch(GAS_URL, { method: 'POST', body: JSON.stringify({ action, ...data }) });
+    return response.json();
+}
+ 

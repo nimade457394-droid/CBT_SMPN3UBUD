@@ -201,6 +201,7 @@
       try {
         const res = await fetch(GAS_URL, {
           method: "POST", 
+          headers: { "Content-Type": "text/plain;charset=utf-8" },
           body: JSON.stringify({ action, ...data }) 
         });
         return await res.json();
@@ -224,7 +225,6 @@
       else if (el.webkitRequestFullscreen) el.webkitRequestFullscreen();
     }
 
-    // --- KEAMANAN DETEKSI TAB/WINDOW ---
     window.addEventListener('blur', () => {
       if (timeLeft > 0 && !isWarningActive) {
         cheatCount++;
@@ -432,7 +432,7 @@
         kelas: userData.kelas, 
         row: userData.row, 
         answers, 
-        pgUrl: examConfig.pgUrl, // Kirim pgUrl ke server
+        pgUrl: examConfig.pgUrl,
         status: statusOverride, 
         pelanggaran: cheatCount, 
         catatan: cheatLog.join("\n") 
